@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.fit
+*.FIT
+*.gpx
+# 公式コース定義のみ含める。実走データ(data/rides/)は個人情報のため追跡しない
+!data/fuji_hillclimb_course.fit
+.streamlit/secrets.toml
+.pytest_cache/
+.playwright-mcp/
+*.log
