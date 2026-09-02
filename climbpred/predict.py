@@ -46,6 +46,7 @@ def predict_fuji(
     race_temp_c: float | None = None,
     tol_s: float = 5.0,
     max_iter: int = 50,
+    power_sigma_w: float | None = None,
 ) -> PredictionResult:
     """反復計算で完走タイムを予測する。"""
     altitude_model = altitude_model or ThresholdLinear()
@@ -102,8 +103,12 @@ def predict_fuji(
             break
         t_no_alt = 0.5 * (t_no_alt + tt)
 
-    # 信頼区間: キャリブレーション残差 (W) を出力の不確かさとして伝播
-    sigma_p = cal.residual_std_w
+    # 信頼区間: パワーの不確かさ (W) を伝播。
+    # power_sigma_w が与えられればそれと残差の大きい方、無ければ残差のみ。
+    resid_sigma = cal.residual_std_w if np.isfinite(cal.residual_std_w) else 0.0
+    sigma_p = max(resid_sigma, power_sigma_w or 0.0)
+    if sigma_p <= 0:
+        sigma_p = 10.0
     t_lo, _ = course_time(p_alt + sigma_p)
     t_hi, _ = course_time(p_alt - sigma_p)
 

@@ -8,8 +8,29 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import lsq_linear
 
-from .constants import CDA_BOUNDS, CRR_BOUNDS, DEFAULT_ETA, G
+from .constants import (
+    CDA_BOUNDS,
+    CRR_BOUNDS,
+    DEFAULT_ETA,
+    G,
+    PRIOR_CDA,
+    PRIOR_CRR,
+    PRIOR_STRENGTH,
+)
 from .physics import air_density, grade_to_angle, power_at_speed
+
+
+@dataclass
+class ParamPrior:
+    """実走データが少ないときに CdA / Crr を引き寄せる標準値(事前分布)。"""
+
+    cda: float = PRIOR_CDA
+    crr: float = PRIOR_CRR
+    strength: float = PRIOR_STRENGTH   # 相当サンプル数
+
+    @staticmethod
+    def default() -> "ParamPrior":
+        return ParamPrior()
 
 
 @dataclass
@@ -29,15 +50,15 @@ class CalibrationResult:
     cda_unconstrained: float = float("nan")
     crr_at_bound: bool = False               # Crr が物理下限/上限に張り付いたか
     cda_at_bound: bool = False
+    data_weight: float = 0.0                 # 推定に占める実走データの割合(0=標準値のみ)
+    prior: ParamPrior | None = None
 
     @property
     def summary(self) -> str:
-        tail = ""
-        if self.crr_at_bound:
-            tail = f"  [Crr は下限に固定 / 生値 {self.crr_unconstrained:.5f}]"
+        w = f", データ寄与 {self.data_weight*100:.0f}%" if self.prior is not None else ""
         return (
             f"CdA = {self.cda:.4f} m^2, Crr = {self.crr:.5f}, "
-            f"eta = {self.eta:.3f}  (n={self.n_points}, RMSE={self.rmse_w:.1f} W){tail}"
+            f"eta = {self.eta:.3f}  (実走点 n={self.n_points}{w})"
         )
 
     @property
@@ -45,19 +66,17 @@ class CalibrationResult:
         return not self.warnings
 
 
-def _check_plausibility(n_climbs, crr_raw, crr_at_bound, cda_at_bound) -> tuple[str, ...]:
+def _check_plausibility(n_climbs, data_weight, crr_at_bound, cda_at_bound) -> tuple[str, ...]:
     w = []
-    if crr_at_bound:
-        w.append(
-            f"Crr が物理下限に張り付きました(制約なしの生値は {crr_raw:.5f})。"
-            "登坂の速度域が狭く重力項と転がり項を分離できていないため、"
-            "CdA が残差を吸収しています。CdA/Crr 個別値は参考程度に。"
-        )
-    if cda_at_bound:
-        w.append("CdA が設定範囲の端に張り付きました。低速登坂ばかりで空力項が効いていません。")
-    if n_climbs < 4:
-        w.append(f"登坂 {n_climbs} 本のみ。勾配・速度域の異なる登坂を 8〜10 本"
-                 "入れると CdA/Crr の分離が安定します(仕様書 8 節)。")
+    if crr_at_bound or cda_at_bound:
+        w.append("CdA/Crr が物理レンジの端に達しました。登坂データの速度域が狭く、"
+                 "空力項と転がり項を分離できていません。標準値寄りに補正しています。")
+    if n_climbs == 0:
+        w.append("実走の登坂データが無いため、CdA/Crr は標準値です。"
+                 "登坂を含む走行データを 1 本足すと簡易補正が効きます。")
+    elif data_weight < 0.5:
+        w.append(f"登坂データが少なく(実走寄与 {data_weight*100:.0f}%)、CdA/Crr は"
+                 "まだ標準値寄りです。勾配・速度域の異なる登坂を増やすと精度が上がります。")
     return tuple(w)
 
 
@@ -107,6 +126,25 @@ def _sample_frame(segments, eta, accel_limit, min_speed, min_power):
     return df[mask].reset_index(drop=True)
 
 
+def params_from_prior(prior: ParamPrior, eta: float = DEFAULT_ETA) -> CalibrationResult:
+    """実走データが無いときに標準値をそのまま返す。"""
+    return CalibrationResult(
+        crr=prior.crr,
+        cda=prior.cda,
+        eta=eta,
+        n_points=0,
+        rmse_w=float("nan"),
+        residual_std_w=18.0,   # モデル前提の不確かさ(W)。信頼区間の下限として使う
+        crr_se=float("nan"),
+        cda_se=float("nan"),
+        per_climb=pd.DataFrame(),
+        n_climbs=0,
+        warnings=_check_plausibility(0, 0.0, False, False),
+        data_weight=0.0,
+        prior=prior,
+    )
+
+
 def calibrate(
     segments,
     mass: float,
@@ -116,19 +154,29 @@ def calibrate(
     min_power: float = 80.0,
     crr_bounds: tuple[float, float] = CRR_BOUNDS,
     cda_bounds: tuple[float, float] = CDA_BOUNDS,
+    prior: ParamPrior | None = None,
 ) -> CalibrationResult:
-    """Crr / CdA を線形最小二乗で一括推定する(仕様書 8 節)。
+    """Crr / CdA を有界リッジ最小二乗で推定する(仕様書 8 節 + 標準値への正則化)。
 
         y  = eta*P_rider - M g sinθ v
         x1 = M g cosθ v
         x2 = 0.5 ρ v^3
         y  = Crr*x1 + CdA*x2
+
+    ``prior`` を与えると、実走点数がその強度を大きく超えるまでは推定を
+    標準値(CdA0/Crr0)寄りに保つ(擬似観測による Tikhonov 正則化)。
     """
     if not segments:
+        if prior is not None:
+            return params_from_prior(prior, eta)
         raise ValueError("キャリブレーションに使う登坂区間がありません。")
 
     data = _sample_frame(segments, eta, accel_limit, min_speed, min_power)
     if len(data) < 50:
+        if prior is not None:
+            r = params_from_prior(prior, eta)
+            r.n_climbs = len(segments)
+            return r
         raise ValueError(
             f"有効なサンプル点が不足しています (n={len(data)})。"
             "定常走行の登坂データを増やしてください。"
@@ -149,22 +197,37 @@ def calibrate(
     x1 = mass * G * np.cos(theta) * v
     x2 = 0.5 * rho * v ** 3
     A = np.column_stack([x1, x2])
+    n = len(y)
 
     # 制約なしの生の解(診断用)
     raw, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
     crr_raw, cda_raw = float(raw[0]), float(raw[1])
 
-    # 物理的に妥当な範囲に収めた有界最小二乗(Crr が負に出る問題への対処)
+    # 標準値への正則化(擬似観測)。data_weight = n / (n + strength)。
+    data_weight = 1.0
+    A_fit, y_fit = A, y
+    if prior is not None and prior.strength > 0:
+        data_weight = n / (n + prior.strength)
+        rows, rhs = [], []
+        for i, x0 in ((0, prior.crr), (1, prior.cda)):
+            lam = np.sqrt(float(A[:, i] @ A[:, i]) * prior.strength / n)
+            row = np.zeros(2)
+            row[i] = lam
+            rows.append(row)
+            rhs.append(lam * x0)
+        A_fit = np.vstack([A, rows])
+        y_fit = np.append(y, rhs)
+
     lo = [crr_bounds[0], cda_bounds[0]]
     hi = [crr_bounds[1], cda_bounds[1]]
-    sol = lsq_linear(A, y, bounds=(lo, hi), method="bvls")
+    sol = lsq_linear(A_fit, y_fit, bounds=(lo, hi), method="bvls")
     crr, cda = float(sol.x[0]), float(sol.x[1])
     tol = 1e-6
     crr_at_bound = crr <= crr_bounds[0] + tol or crr >= crr_bounds[1] - tol
     cda_at_bound = cda <= cda_bounds[0] + tol or cda >= cda_bounds[1] - tol
 
     resid = y - A @ sol.x
-    dof = max(len(y) - 2, 1)
+    dof = max(n - 2, 1)
     sigma2 = float(resid @ resid) / dof
     try:
         cov = sigma2 * np.linalg.inv(A.T @ A)
@@ -177,13 +240,13 @@ def calibrate(
     residual_std_w = float(np.std(resid) / eta)
 
     per_climb = _back_predict(segments, mass, crr, cda, eta)
-    warns = _check_plausibility(len(segments), crr_raw, crr_at_bound, cda_at_bound)
+    warns = _check_plausibility(len(segments), data_weight, crr_at_bound, cda_at_bound)
 
     return CalibrationResult(
         crr=crr,
         cda=cda,
         eta=eta,
-        n_points=len(y),
+        n_points=n,
         rmse_w=rmse_w,
         residual_std_w=residual_std_w,
         crr_se=crr_se,
@@ -191,6 +254,8 @@ def calibrate(
         per_climb=per_climb,
         n_climbs=len(segments),
         warnings=warns,
+        data_weight=data_weight,
+        prior=prior,
         crr_unconstrained=crr_raw,
         cda_unconstrained=cda_raw,
         crr_at_bound=crr_at_bound,
