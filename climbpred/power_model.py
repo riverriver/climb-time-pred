@@ -129,11 +129,10 @@ def build_power_model(
         d, w = next(iter(mmp.items()))
         if ftp:
             cp, w_prime, _ = _fit_cp(sorted([(d, w), (FTP_HOUR_S, ftp)]))
-            src = f"FTP + 実測 {int(d)}s パワー({w:.0f}W)"
+            src = f"FTP + 実測 {d / 60:g}分パワー({w:.0f}W)"
             return PowerModel("cp", cp, w_prime, ftp, intensity, 1, 0.05, src, {d: w, FTP_HOUR_S: ftp})
         # FTP 無し・1 点のみ → その点を FTP 相当とみなす
-        eff_ftp = w * (FTP_HOUR_S / d) ** 0.0  # そのまま
-        src = f"実測 {int(d)}s パワー({w:.0f}W)を FTP 相当として使用"
+        src = f"実測 {d / 60:g}分パワー({w:.0f}W)を FTP 相当として使用"
         return PowerModel("ftp", w, 0.0, w, intensity, 1, 0.07, src, {d: w})
 
     # 実測なし → FTP のみ

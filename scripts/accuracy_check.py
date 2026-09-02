@@ -52,7 +52,7 @@ def main() -> None:
         for w in cal.warnings:
             print("  ! " + w)
     print(f"PD カーブ: CP {pdc.cp:.0f} W / W' {pdc.w_prime/1000:.1f} kJ / R2 {pdc.r2:.2f}")
-    print(f"MMP: {{{', '.join(f'{int(k)}s:{v:.0f}W' for k, v in sorted(rep.analysis.mmp.items()))}}}")
+    print(f"MMP: {{{', '.join(f'{k/60:g}分:{v:.0f}W' for k, v in sorted(rep.analysis.mmp.items()))}}}")
 
     print("\n=== 富士ヒル予測(標高補正モデル別)===")
     print(rep.table.to_string(index=False))

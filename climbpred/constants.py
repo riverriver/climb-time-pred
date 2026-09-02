@@ -43,8 +43,6 @@ FTP_FADE_PER_HOUR = 0.11        # 1時間を超えた分、1時間ごとに約 1
 FTP_FACTOR_FLOOR = 0.78
 FTP_FACTOR_CEIL = 1.06         # 1時間未満(速いライダー)は少しだけ上振れ
 
-# --- PD カーブ抽出に用いる継続時間 [s] ---
-
 # --- クライム自動抽出の既定閾値 ---
 CLIMB_MIN_GRADE = 0.03      # 区間平均勾配 [-]
 CLIMB_MIN_LENGTH = 1000.0   # 最小継続距離 [m]

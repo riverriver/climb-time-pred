@@ -236,12 +236,14 @@ if run:
                 st.markdown("**パワーカーブ**")
                 durs = sorted(ip.mmp)
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=durs, y=[ip.mmp[d] for d in durs],
+                fig.add_trace(go.Scatter(x=[d / 60 for d in durs],
+                                         y=[ip.mmp[d] for d in durs],
                                          mode="markers", name="実測 mean-max"))
                 tt = list(range(30, 5400, 30))
-                fig.add_trace(go.Scatter(x=tt, y=[pm.power(t) for t in tt],
+                fig.add_trace(go.Scatter(x=[t / 60 for t in tt],
+                                         y=[pm.power(t) for t in tt],
                                          mode="lines", name="モデル"))
-                fig.update_layout(xaxis_title="継続時間 [s]", yaxis_title="パワー [W]",
+                fig.update_layout(xaxis_title="継続時間 [min]", yaxis_title="パワー [W]",
                                   height=320, margin=dict(t=20))
                 st.plotly_chart(fig, use_container_width=True)
                 st.caption(
