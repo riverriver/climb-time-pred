@@ -42,6 +42,12 @@ def test_tier0_prediction_plausible_and_monotone_in_ftp():
         times.append(ip.result.time_s)
     assert times[0] > times[1] > times[2]  # FTP が高いほど速い
 
+    # 区間別テーブルは 500 m 単位・小数第1位表示、合計はコース距離に一致
+    tbl = ip.result.segment_table
+    assert tbl["区間"].iloc[0] == "0.0-0.5 km"
+    assert 44 <= len(tbl) <= 50
+    assert abs(tbl["距離[m]"].sum() - COURSE.distance_m) < 1.0
+
 
 def test_adding_climbs_shifts_params_from_prior():
     rides = {

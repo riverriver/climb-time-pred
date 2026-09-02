@@ -28,6 +28,7 @@
 | コースデータ | 公式マップ / GPX | 公式コース定義 FIT から CSV 生成。GPX / FIT 差し替えもアプリで可 |
 | 走行データ形式 | FIT のみ | FIT + GPX(power/hr/cad 拡張)対応(`climbpred/fit_ingest.py: load_ride`) |
 | 3次方程式 | scipy | `numpy.roots` + Newton フォールバック(`climbpred/physics.py`) |
+| 区間別表示 | — | 物理計算はコース分解能(100 m)、区間別テーブルは 500 m ごとに集約(`predict_fuji(..., report_bin_m=500)`)。ラベルは `0.0-0.5 km`、時間は mm:ss。 |
 
 ## セットアップ
 
